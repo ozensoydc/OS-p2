@@ -427,21 +427,129 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack (void **esp, const char* file_name) 
 {
   uint8_t *kpage;
   bool success = false;
-
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
-    }
-  return success;
+  int cmd_size=strlen(file_name);
+  /* checking that size of command line is not greater than PGSIZE*/
+  if(cmd_size>PGSIZE){
+    return null;
+  }
+  else{
+    //char* token = strtok_r(file_name," ");
+    //while(token
+    kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+    
+    if (kpage != NULL) 
+      {
+	
+	
+	success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, 
+				kpage, true);
+	if (success){
+	  /*push the command line string onto stack*/
+	  memcpy(kpage + PGSIZE - cmd_size, file_name, cmd_size);
+	  char* token=strtok_r(file_name," ");
+	  struct thread *t = thread_current();
+	  void* userpage_v = 
+	    pagedir_get_page(t->pagedir,
+			     ((uint8_t *)PHYS_BASE) - PGSIZE);
+	  int counter_args=0; //counts how many args are put in
+	  int args_cum_size=0;
+	  for(token,token!=NULL,strtok_r(NULL," ")){
+	    /* kernel v_addr corresponding to physical address of
+	       token*/
+	    char* cmd_token = strdup(token);
+	    void* user_arg_vaddr = 
+	      userpage_v + (cmd_token - (char*)kpage);
+	    /*push the user_arg's address to kpage stack*/
+	    memcpy(kpage + PGSIZE - sizeof(&user_arg),
+		   user_arg, sizeof(&user_arg));
+	    counter_args++;
+	    args_cum_size+=strlen(token);
+	  }
+	  args_cum_size+=counter_args;
+	  /*push into stack in reversed order, however many constitute
+	    argv*/
+	  memcpy(kpage+PGSIZE-args_cum_size,
+		 revert_byte_order(kpage+PGSIZE,args_cum_size),
+		 args_cum_size);
+	  /*word align*/
+	  uint8_t w_a=0;
+	  memcpy(kpage+PGSIZE-sizeof(w_a),
+		 &(w+a),sizeof(w_a));
+	  /*from here on args_cum_size also servers to keep track
+	    of how far below kpage+PGSIZE we are in bytes */
+	  args_cum_size+=sizeof(w_a);
+	  /*set up null sentinel at counter_args++*/
+	  char* n_sentinel=NULL;
+	  args_cum_size+=sizeof(n_sentinel);
+	  memcpy(kpage+PGSIZE-args_cum_size,n_sentinel,
+		 sizeof(n_sentinel));
+	  /*set up argc*/
+	  //int null_c=0;
+	  char* nulls=&(where_is_null(kpage+PGSIZE));
+	  int* arg_count=counter_args+1;
+	  for(counter_args;counter_args>=0;counter_args--){
+	    
+	    args_cum_size+=sizeof(char*);
+	    
+	    memcpy(kpage+PGSIZE-args_cum_size,
+		   nulls,sizeof(nulls));
+	    nulls=&(where_is_null((void*)nulls));
+	  }
+	  /*pointer to argv*/
+	  char* argv=(char**)&(kpage+PGSIZE-args_cum_size);
+	  args_cum_size+=sizeof(char**);
+	  memcpy(kpage+PGSIZE-args_cum_size,argv,sizeof(argv));
+	  /*insert number of argcount*/
+	  args_cum_size+=sizeof(int);
+	  memcpy(kpage+PGSIZE-args_cum_size,arg_count,sizeof(arg_count));
+	  /*insert return address*/
+	  args_cum_size+-sizeof(void*);
+	  void* return_p=NULL;
+	  memcpy(kpage+PGSIZE-args_cum_size,return_p,sizeof(return_p));
+	  *esp = PHYS_BASE;
+	  
+	}
+	else
+	  palloc_free_page (kpage);
+      }
+    return success;
+  }
+  
+}
+/*given a position in a stack, moves down to find the first instance of
+  a null pointer, upon finding it , returns the address of the 
+  previous byte*/
+int where_is_null(void* v_addr){
+  void* p_return;
+  void* p_compare=v_addr-2;
+  while(p_compare!=NULL){
+    p_compare=v_addr-1;
+  }
+  p_return=p_compare+1;
+  return p_return;
+}
+/*reverse bits takes the address to a pointer, and the number of bytes
+  there on to inverse, and reverts byte order*/
+void* revert_byte_order(void* v_addr,int to_revert){
+  //long int addr=&v_addr;
+  int counter;
+  void* rev=(void *)malloc(to_revert);
+  void* temp;
+  /*if((to_revert%2)==0){
+    counter=(to_revert/2);
+  }
+  else counter=(to_revert/2)-0.5;*/
+  int i=0;
+  for(i;i<to_revert;i++){
+    //temp=&void[i];
+    rev[i]=void[to_revert-i-1];
+    //void[to_revert-1-i]=temp;
+  }
+  return rev,
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
