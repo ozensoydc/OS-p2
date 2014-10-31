@@ -21,7 +21,8 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-
+void read_bytes(void* v_addr,int n);
+char* revert_words(char* word, int n);
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -90,6 +91,8 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  while(1){
+  }
   return -1;
 }
 
@@ -225,7 +228,16 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
-  file = filesys_open (file_name);
+  /* Pass only the executable name */
+  printf("filename in load: %s \n", file_name);
+  char* cmd_line=(char *)malloc(strlen(file_name)+1);
+  mempcpy(cmd_line,file_name,strlen(file_name)+1);//=NULL;
+  //strlcpy(cmd_line,file_name,sizeof(cmd_line));
+  printf("strlcpy file_name: %s\n",cmd_line);
+  char* tok_char=(char *)malloc(sizeof(100));
+  char* exec = strtok_r(cmd_line," ",&tok_char);
+  printf("exec: %s\n", exec);
+  file = filesys_open (exec);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -432,6 +444,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp, const char* file_name) 
 {
+  printf("entered setup_stack file_name: %s\n",file_name);
   uint8_t *kpage;
   bool success = false;
   int cmd_size=strlen(file_name);
@@ -452,46 +465,67 @@ setup_stack (void **esp, const char* file_name)
 	  /*push the command line string onto stack*/
 	  printf("here is what the file_name is %s\n",file_name);
 	  memcpy(kpage + PGSIZE - cmd_size, file_name, cmd_size);
-	  char** save_token;
-	  char* token=strtok_r(file_name," ", save_token);
+	  char* cmd_line=(char *)malloc(strlen(file_name)+1);
+	  mempcpy(cmd_line,file_name,strlen(file_name)+1);
+	  printf("copied cmd_line: %s\n",cmd_line);
+	  char* save_token;//=(char *)malloc(200);
+	  char* token=strtok_r(cmd_line," ", &save_token);
+	  printf("token is %s at line464\n", token);
+	  //token=strtok_r(NULL, " ", &save_token);
+	  //printf("token is %s at line468\n", token);
 	  struct thread *t = thread_current();
 	  void* userpage_v = 
-	    pagedir_get_page(t->pagedir,
-			     ((uint8_t *)PHYS_BASE) - PGSIZE);
+	  pagedir_get_page(t->pagedir,
+			   ((uint8_t *)PHYS_BASE) - PGSIZE);
 	  int counter_args=0; //counts how many args are put in
 	  int args_cum_size=0;
-	  for(;token!=NULL;strtok_r(NULL," ",save_token)){
+	  while(token!=NULL){
 	    /* kernel v_addr corresponding to physical address of
 	       token*/
 	    printf("token is %s\n",token);
-	    char* cmd_token;// = strdup(token);
-	    strlcpy(cmd_token,token,sizeof(token));
+	    char* cmd_token=(char*)malloc(sizeof(strlen(token)+1));
+	    mempcpy(cmd_token,token,strlen(token)+1);
 	    printf("cmd_token is %s\n",cmd_token);
-	    void* user_arg_vaddr = 
-	      userpage_v + (cmd_token - (char*)kpage);
+	    //void* user_arg_vaddr = 
+	    //userpage_v + (cmd_token - (char*)kpage);
+	    //printf("size of userarg is %d\n", (int)sizeof(&user_arg_vaddr));
 	    /*push the user_arg's address to kpage stack*/
-	    memcpy(kpage + PGSIZE - sizeof(&user_arg_vaddr),
-		   user_arg_vaddr, sizeof(&user_arg_vaddr));
+	    //memcpy(kpage + PGSIZE - args_cum_size - sizeof(&user_arg_vaddr)-1,	   user_arg_vaddr, sizeof(&user_arg_vaddr));
+	    args_cum_size+=strlen(cmd_token)+1;//sizeof(&user_arg_vaddr);//strlen(token);
+	    cmd_token=revert_words(cmd_token,strlen(cmd_token)+1);
+	    memcpy(kpage + PGSIZE - args_cum_size,(void*)cmd_token,
+		   strlen(cmd_token)+1);
+		   //user_arg_vaddr, sizeof(&user_arg_vaddr));
 	    counter_args++;
-	    args_cum_size+=strlen(token);
+	    
+	    printf("bytes down: %d\n",args_cum_size);
+	    /* printf("just pushed %s to %x\n",(char*)kpage+PGSIZE
+		   -args_cum_size,
+		   kpage+PGSIZE - args_cum_size);*/
+	    //strlcpy(token,cmd_token,strlen(cmd_token)+1);
+	    read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
+	    token=strtok_r(NULL," ",&save_token);
 	  }
-	  args_cum_size+=counter_args;
+	  //args_cum_size+=counter_args;
 	  /*push into stack in reversed order, however many constitute
 	    argv*/
+	  read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
 	  memcpy(kpage+PGSIZE-args_cum_size,
-		 revert_byte_order(kpage+PGSIZE,args_cum_size),
+		 revert_byte_order(kpage+PGSIZE-args_cum_size,args_cum_size),
 		 args_cum_size);
+	  read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
 	  /*word align*/
 	  uint8_t w_a=0;
-	  memcpy(kpage+PGSIZE-sizeof(w_a),
+	  args_cum_size+=sizeof(w_a);
+	  memcpy(kpage+PGSIZE-args_cum_size,
 		 &(w_a),sizeof(w_a));
 	  /*from here on args_cum_size also servers to keep track
 	    of how far below kpage+PGSIZE we are in bytes */
-	  args_cum_size+=sizeof(w_a);
+	  
 	  /*set up null sentinel at counter_args++*/
 	  char* n_sentinel=NULL;
 	  args_cum_size+=sizeof(n_sentinel);
-	  memcpy(kpage+PGSIZE-args_cum_size,n_sentinel,
+	  memcpy(kpage+PGSIZE-args_cum_size,&n_sentinel,
 		 sizeof(n_sentinel));
 	  /*set up argc*/
 	  //int null_c=0;
@@ -527,28 +561,59 @@ setup_stack (void **esp, const char* file_name)
   }
   
 }
+
+/* Given a position in a stack, read through n bytes towards the top of the
+   stack.  This is mostly for debugging */
+void read_bytes(void* v_addr,int n){
+  int i;
+  char* ch=(char *) v_addr;
+  for(i=0;i<n;i++){
+    printf("it reads: %c at addr: %x\n",*(ch+i),v_addr+i);
+  }
+}
+
 /*given a position in a stack, moves down to find the first instance of
   a null pointer, upon finding it , returns the address of the 
   previous byte*/
 void* where_is_null(void* v_addr){
-  void* p_return;
-  void* p_compare=v_addr-2;
+  char* p_return;
+  char* p_compare=(char*)v_addr-2;
   while(p_compare!=NULL){
-    p_compare=v_addr-1;
+    printf("pointer points to %s\n",p_compare);
+    p_compare=(char*)v_addr-1;
   }
   p_return=p_compare+1;
   return p_return;
+}
+/* inverts a word */
+
+char* revert_words(char* word, int n){
+  char temp;
+  int i=0;
+  int recurse=n/2;
+  for(;i<recurse;i++){
+    temp=word[i];
+    printf("take %c swap with %c in rev_word\n",
+	   temp,*(word+n-i-1));
+    word[i]=word[n-i-1];
+    word[n-i-1]=temp;
+  }
+  read_bytes(word,n);
+  return word;
 }
 /*reverse bits takes the address to a pointer, and the number of bytes
   there on to inverse, and reverts byte order*/
 void* revert_byte_order(void* v_addr,int to_revert){
   //int counter;
+  printf("in revert_byte_order, first thing is %s\n",(char*)v_addr);
   char* rev=(char *)malloc(to_revert);
   char temp;
   rev = (char *) v_addr;
   int i=0;
-  for(;i<to_revert;i++){
+  int to_recurse=to_revert/2;
+  for(;i<to_recurse;i++){
     temp=rev[i];
+    printf("take %c swap with %c\n",*(rev+i),*(rev+to_revert-i-1));
     rev[i]=rev[to_revert-i-1];
     rev[to_revert-i-1]=temp;
   }
