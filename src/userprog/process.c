@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -50,6 +51,7 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
+  printf("in start_process\n");
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
@@ -195,7 +197,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack (void **esp, const char* file_name);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -209,6 +211,7 @@ bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
+  printf("in load\n");
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
   off_t file_ofs;
@@ -302,7 +305,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
+  if (!setup_stack (esp,file_name))
     goto done;
 
   /* Start address. */
@@ -434,7 +437,7 @@ setup_stack (void **esp, const char* file_name)
   int cmd_size=strlen(file_name);
   /* checking that size of command line is not greater than PGSIZE*/
   if(cmd_size>PGSIZE){
-    return null;
+    return NULL;
   }
   else{
     //char* token = strtok_r(file_name," ");
@@ -443,29 +446,32 @@ setup_stack (void **esp, const char* file_name)
     
     if (kpage != NULL) 
       {
-	
-	
 	success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, 
 				kpage, true);
 	if (success){
 	  /*push the command line string onto stack*/
+	  printf("here is what the file_name is %s\n",file_name);
 	  memcpy(kpage + PGSIZE - cmd_size, file_name, cmd_size);
-	  char* token=strtok_r(file_name," ");
+	  char** save_token;
+	  char* token=strtok_r(file_name," ", save_token);
 	  struct thread *t = thread_current();
 	  void* userpage_v = 
 	    pagedir_get_page(t->pagedir,
 			     ((uint8_t *)PHYS_BASE) - PGSIZE);
 	  int counter_args=0; //counts how many args are put in
 	  int args_cum_size=0;
-	  for(token,token!=NULL,strtok_r(NULL," ")){
+	  for(;token!=NULL;strtok_r(NULL," ",save_token)){
 	    /* kernel v_addr corresponding to physical address of
 	       token*/
-	    char* cmd_token = strdup(token);
+	    printf("token is %s\n",token);
+	    char* cmd_token;// = strdup(token);
+	    strlcpy(cmd_token,token,sizeof(token));
+	    printf("cmd_token is %s\n",cmd_token);
 	    void* user_arg_vaddr = 
 	      userpage_v + (cmd_token - (char*)kpage);
 	    /*push the user_arg's address to kpage stack*/
-	    memcpy(kpage + PGSIZE - sizeof(&user_arg),
-		   user_arg, sizeof(&user_arg));
+	    memcpy(kpage + PGSIZE - sizeof(&user_arg_vaddr),
+		   user_arg_vaddr, sizeof(&user_arg_vaddr));
 	    counter_args++;
 	    args_cum_size+=strlen(token);
 	  }
@@ -478,7 +484,7 @@ setup_stack (void **esp, const char* file_name)
 	  /*word align*/
 	  uint8_t w_a=0;
 	  memcpy(kpage+PGSIZE-sizeof(w_a),
-		 &(w+a),sizeof(w_a));
+		 &(w_a),sizeof(w_a));
 	  /*from here on args_cum_size also servers to keep track
 	    of how far below kpage+PGSIZE we are in bytes */
 	  args_cum_size+=sizeof(w_a);
@@ -489,25 +495,26 @@ setup_stack (void **esp, const char* file_name)
 		 sizeof(n_sentinel));
 	  /*set up argc*/
 	  //int null_c=0;
-	  char* nulls=&(where_is_null(kpage+PGSIZE));
-	  int* arg_count=counter_args+1;
-	  for(counter_args;counter_args>=0;counter_args--){
-	    
+	  char* null_addr=(char*) where_is_null(kpage+PGSIZE);
+	  //char* nulls;//=&null_addr;
+	  int arg_count=counter_args+1;
+	  for(; counter_args>=0; counter_args--){
+	    printf("arg i=%d is %s\n",counter_args,null_addr);
 	    args_cum_size+=sizeof(char*);
 	    
 	    memcpy(kpage+PGSIZE-args_cum_size,
-		   nulls,sizeof(nulls));
-	    nulls=&(where_is_null((void*)nulls));
+		   &null_addr,sizeof(&null_addr));
+	    null_addr=(char *)where_is_null(null_addr);
 	  }
 	  /*pointer to argv*/
-	  char* argv=(char**)&(kpage+PGSIZE-args_cum_size);
+	  char* argv=(char *)(kpage+PGSIZE-args_cum_size);
 	  args_cum_size+=sizeof(char**);
-	  memcpy(kpage+PGSIZE-args_cum_size,argv,sizeof(argv));
+	  memcpy(kpage+PGSIZE-args_cum_size,&argv,sizeof(argv));
 	  /*insert number of argcount*/
 	  args_cum_size+=sizeof(int);
-	  memcpy(kpage+PGSIZE-args_cum_size,arg_count,sizeof(arg_count));
+	  memcpy(kpage+PGSIZE-args_cum_size,&arg_count,sizeof(arg_count));
 	  /*insert return address*/
-	  args_cum_size+-sizeof(void*);
+	  args_cum_size+=sizeof(void*);
 	  void* return_p=NULL;
 	  memcpy(kpage+PGSIZE-args_cum_size,return_p,sizeof(return_p));
 	  *esp = PHYS_BASE;
@@ -523,7 +530,7 @@ setup_stack (void **esp, const char* file_name)
 /*given a position in a stack, moves down to find the first instance of
   a null pointer, upon finding it , returns the address of the 
   previous byte*/
-int where_is_null(void* v_addr){
+void* where_is_null(void* v_addr){
   void* p_return;
   void* p_compare=v_addr-2;
   while(p_compare!=NULL){
@@ -535,21 +542,17 @@ int where_is_null(void* v_addr){
 /*reverse bits takes the address to a pointer, and the number of bytes
   there on to inverse, and reverts byte order*/
 void* revert_byte_order(void* v_addr,int to_revert){
-  //long int addr=&v_addr;
-  int counter;
-  void* rev=(void *)malloc(to_revert);
-  void* temp;
-  /*if((to_revert%2)==0){
-    counter=(to_revert/2);
-  }
-  else counter=(to_revert/2)-0.5;*/
+  //int counter;
+  char* rev=(char *)malloc(to_revert);
+  char temp;
+  rev = (char *) v_addr;
   int i=0;
-  for(i;i<to_revert;i++){
-    //temp=&void[i];
-    rev[i]=void[to_revert-i-1];
-    //void[to_revert-1-i]=temp;
+  for(;i<to_revert;i++){
+    temp=rev[i];
+    rev[i]=rev[to_revert-i-1];
+    rev[to_revert-i-1]=temp;
   }
-  return rev,
+  return (void*) rev;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
