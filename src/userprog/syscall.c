@@ -72,7 +72,9 @@ syscall_init (void)
 
   lock_init (&filesys_lock);
 
+  syscall_list[SYS_EXIT] = &syscall_exit;
   syscall_list[SYS_WRITE] = &syscall_write;
+  syscall_argc[SYS_EXIT] = 1;
   syscall_argc[SYS_WRITE] = 3;
 }
 
@@ -88,7 +90,14 @@ syscall_handler (struct intr_frame *f)
   thread_exit ();
 }
 
-
+static void
+syscall_exit (int *args, struct intr_frame *f)
+{
+    thread_current()->ret = args[1];
+    printf("%s: exit(%d)\n", thread_current()->name, args[1]);
+    f->eax = args[1];
+    thread_exit();
+}
 
 static void
 syscall_write (int *args, struct intr_frame *f)
