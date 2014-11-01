@@ -1,18 +1,25 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "threads/malloc.h"
+#include "threads/synch.h"
+#include "filesys/filesys.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
 static void syscall_write (int *, struct intr_frame *);
+static void syscall_exit (int *, struct intr_frame *);
 
-static void (*syscall_functions[13]) (int *, struct intr_frame *);
+static void (*syscall_list[13]) (int *, struct intr_frame *);
 static int syscall_argc[13];
 
-static int get_user (const uint8_t *uaddr);
+static int get_byte_user (const uint8_t *uaddr);
+static int get_word_user (const uint8_t *uaddr);
 static bool put_user (uint8_t *udst, uint8_t byte);
 
 static struct lock filesys_lock;
+
+static void syscall_handler (struct intr_frame *f);
 
 /* Reads a byte at user virtual address UADDR
  * UADDR must be below PHYS_BASE.
@@ -54,8 +61,9 @@ syscall_get_args( struct intr_frame *f)
     int *args = (int *) malloc(3);
     int syscall_num = get_word_user((int *)(f->esp));
     int argc = syscall_argc[syscall_num];
+    int i;
 
-    for (int i = 0; i <= 13; i++) {
+    for (i = 0; i < argc; i++) {
         args[i] = get_word_user((int *)(f->esp) + i);
         // check for validity?
     }
@@ -93,7 +101,7 @@ syscall_handler (struct intr_frame *f)
 static void
 syscall_exit (int *args, struct intr_frame *f)
 {
-    thread_current()->ret = args[1];
+    //thread_current()->ret = args[1];
     printf("%s: exit(%d)\n", thread_current()->name, args[1]);
     f->eax = args[1];
     thread_exit();
@@ -109,7 +117,7 @@ syscall_write (int *args, struct intr_frame *f)
         lock_acquire(&filesys_lock);
         uint8_t *buf = (uint8_t *) args[2];
         putbuf((char *) buffer, size);
-        lock_release(*filesys_lock);
+        lock_release(&filesys_lock);
         f->eax = size;
     } 
 }
