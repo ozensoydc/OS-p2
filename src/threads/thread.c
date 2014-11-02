@@ -13,6 +13,7 @@
 #include "threads/vaddr.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "userprog/pagedir.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -70,7 +71,9 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
-
+struct thread* get_thread_by_tid(tid_t tid);
+int add_child(struct thread* thread);
+       
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -184,6 +187,11 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
+  /* if user prog, add child */
+  
+  #ifdef USERPROG
+  add_child(thread_current(),tid);
+  #endif
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
      member cannot be observed. */
@@ -470,6 +478,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+  #ifdef USERPROG
+  list_init(t->children);
+  sema_init(t->child_lock,0);
+  #endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -566,6 +578,31 @@ schedule (void)
   if (cur != next)
     prev = switch_threads (cur, next);
   thread_schedule_tail (prev);
+}
+
+/* add a child process to thread */
+
+int add_child(struct thread* p_thread, tid_t c_tid){
+  struct thread* c_thread=get_thread_by_tid(c_tid);
+  child->parent_thread =p_thread;
+  list_push_back(&p_thread->children,c_tid->childelem);
+  return 0;
+}
+
+/* Return a pointer to thread pointed at by the tid */
+
+struct thread* get_thread_by_tid(tid_t tid){
+  struct list_elem* elem;
+  struct thread* t;
+  for(elem=list_begin(&all_list);elem!=list_end(&all_list);
+      elem=list_next(elem)){
+    t=list_entry(elem,struct thread,allelem);
+    if(t->tid=tid){
+      return t;
+    }
+  }
+  printf("no thread found\n");
+  return NULL;
 }
 
 /* Returns a tid to use for a new thread. */
