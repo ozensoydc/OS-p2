@@ -128,7 +128,6 @@ struct thread
     struct list files;
     int next_fd;
     struct semaphore *child_lock;
-    int status;
 #endif
 
     /* Owned by thread.c. */
