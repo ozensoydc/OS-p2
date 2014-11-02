@@ -65,10 +65,90 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
-  /* If load failed, quit. */
-  palloc_free_page (file_name);
+    /* If load failed, quit. */
   if (!success) 
     thread_exit ();
+  
+  /*setting up the stack*/
+  char* cmd_line = (char *) malloc(strlen(file_name)+1);
+  mempcpy(cmd_line,file_name,strlen(file_name)+1);
+  char *save_token;
+  int arg_length=0;
+  char *token=strtok_r(cmd_line," ", &save_token);
+  char *cmd_name=token;
+  int argc=0;
+  int cum_length=0;
+  int temp=0;
+  int tmp_len=0;
+  /* create an array to hold the args*/
+  char **args=(char **)malloc((strlen(file_name)+1)*sizeof(char));
+  if(args==NULL){
+    printf("Ran out of memory trying to allocate %d bytes.\n", 
+	   strlen(file_name)+1);
+  }
+  args[0]=token;
+  argc++;
+  
+  /* acquire argc */
+  while(token=strtok_r(NULL," ", &save_token)){
+    args[argc]=token;
+    cum_length+=strlen(token)+1;
+    printf("wrote %s to index %d\n",args[argc],argc);
+    argc++;
+  }
+  
+  /* acquire addresses */
+  int arg_len;
+  int **arg_addresses=(int **)malloc(argc*sizeof(int*));
+  for(temp=argc-1;temp>=0;temp--){
+    arg_len=strlen(args[temp])+1;
+    if_.esp -= arg_len;
+    arg_addresses[temp]=if_.esp;
+    mempcpy(if_.esp,args[temp],arg_len);
+  }
+  
+  /* word align */
+  int w_a = cum_length % 4;
+  if(w_a!=0){
+    if_.esp-= 4-w_a; //if word align is not zero, go 4-w_a bytes on stack
+    cum_length+=4-w_a;
+  }
+  
+  /* 0 sentinel argument */
+  cum_length+=4;
+  *(int *) if_.esp = 0;
+
+  /* push addresses of the arguments */
+  
+  for(temp=argc-1;temp>=0;temp--){
+    cum_length+=4;
+    if_.esp-=4;
+    *(void **)if_.esp=arg_addresses[temp];
+  }
+  
+  /*argv*/
+  cum_length+=4;
+  if_.esp-=4;
+  *(char **)if_.esp = if_.esp+4;
+  
+  /*argc*/
+  cum_length+=4;
+  if_.esp-=4;
+  *(int *)if_.esp = argc;
+  
+  /*fake return address*/
+  cum_length+=4;
+  if_.esp-=4;
+  *(int*)if_.esp=0;
+  
+  /* Deallocating memory */
+  free(arg_addresses);
+  free(args);
+  
+
+
+  palloc_free_page (file_name);
+  
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -235,7 +315,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   mempcpy(cmd_line,file_name,strlen(file_name)+1);//=NULL;
   //strlcpy(cmd_line,file_name,sizeof(cmd_line));
   printf("strlcpy file_name: %s\n",cmd_line);
-  char* tok_char=(char *)malloc(sizeof(100));
+  char* tok_char;//=(char *)malloc(sizeof(100));
   char* exec = strtok_r(cmd_line," ",&tok_char);
   printf("exec: %s\n", exec);
   file = filesys_open (exec);
@@ -454,8 +534,7 @@ setup_stack (void **esp, const char* file_name)
     return NULL;
   }
   else{
-    //char* token = strtok_r(file_name," ");
-    //while(token
+    
     kpage = palloc_get_page (PAL_USER | PAL_ZERO);
     
     if (kpage != NULL) 
@@ -464,16 +543,14 @@ setup_stack (void **esp, const char* file_name)
 				kpage, true);
 	if (success){
 	  /*push the command line string onto stack*/
-	  printf("here is what the file_name is %s\n",file_name);
+	  /*printf("here is what the file_name is %s\n",file_name);
 	  memcpy(kpage + PGSIZE - cmd_size, file_name, cmd_size);
 	  char* cmd_line=(char *)malloc(strlen(file_name)+1);
 	  mempcpy(cmd_line,file_name,strlen(file_name)+1);
 	  printf("copied cmd_line: %s\n",cmd_line);
-	  char* save_token;//=(char *)malloc(200);
+	  char* save_token;
 	  char* token=strtok_r(cmd_line," ", &save_token);
 	  printf("token is %s at line464\n", token);
-	  //token=strtok_r(NULL, " ", &save_token);
-	  //printf("token is %s at line468\n", token);
 	  struct thread *t = thread_current();
 	  void* userpage_v = 
 	  pagedir_get_page(t->pagedir,
@@ -483,51 +560,33 @@ setup_stack (void **esp, const char* file_name)
 	  while(token!=NULL){
 	    /* kernel v_addr corresponding to physical address of
 	       token*/
-	    printf("token is %s\n",token);
+	  /*printf("token is %s\n",token);
 	    char* cmd_token=(char*)malloc(sizeof(strlen(token)+1));
 	    mempcpy(cmd_token,token,strlen(token)+1);
 	    printf("cmd_token is %s\n",cmd_token);
-	    //void* user_arg_vaddr = 
-	    //userpage_v + (cmd_token - (char*)kpage);
-	    //printf("size of userarg is %d\n", (int)sizeof(&user_arg_vaddr));
-	    /*push the user_arg's address to kpage stack*/
-	    //memcpy(kpage + PGSIZE - args_cum_size - sizeof(&user_arg_vaddr)-1,	   user_arg_vaddr, sizeof(&user_arg_vaddr));
-	    args_cum_size+=strlen(cmd_token)+1;//sizeof(&user_arg_vaddr);//strlen(token);
+	    args_cum_size+=strlen(cmd_token)+1;
 	    
 	    cmd_token=revert_words(token,strlen(token)+1);
 	    
 	    counter_args++;
-	    
-	    //read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
-	   
 	    memcpy(kpage + PGSIZE - args_cum_size,(void*)cmd_token,
 		   strlen(cmd_token)+1);
-		   //user_arg_vaddr, sizeof(&user_arg_vaddr));
-
-	    
 	    
 	    printf("bytes down: %d\n",args_cum_size);
-	    /* printf("just pushed %s to %x\n",(char*)kpage+PGSIZE
-		   -args_cum_size,
-		   kpage+PGSIZE - args_cum_size);*/
-	    //strlcpy(token,cmd_token,strlen(cmd_token)+1);
-	    //read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
+	    
 	    token=strtok_r(NULL," ",&save_token);
 	  }
-	  //args_cum_size+=counter_args;
-	  /*push into stack in reversed order, however many constitute
-	    argv*/
-	  //read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
+	  
 	  memcpy(kpage+PGSIZE-args_cum_size,
 		 revert_byte_order(kpage+PGSIZE-args_cum_size,args_cum_size),
 		 args_cum_size);
 	  
 	  /*shift one byte right, and add a null to the end*/
-	  shift_down(kpage+PGSIZE-args_cum_size,args_cum_size);
+	  /*shift_down(kpage+PGSIZE-args_cum_size,args_cum_size);
 	  read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
 	  void* last_arg_addr=(void*)kpage+PGSIZE-args_cum_size;
 	  /*word align*/
-	  uint8_t w_a=0;
+	  /*uint8_t w_a=0;
 	  args_cum_size+=sizeof(w_a);
 	  memcpy(kpage+PGSIZE-args_cum_size,
 		 &(w_a),sizeof(w_a));
@@ -536,22 +595,17 @@ setup_stack (void **esp, const char* file_name)
 	    of how far below kpage+PGSIZE we are in bytes */
 	  
 	  /*set up null sentinel at counter_args++*/
-	  char* n_sentinel=0;
+	  /* char* n_sentinel=0;
 	  args_cum_size+=sizeof(n_sentinel);
 	  memcpy(kpage+PGSIZE-args_cum_size,&n_sentinel,
 		 sizeof(n_sentinel));
 	  printf("n_sentinel at %x is %s\n",kpage+PGSIZE-args_cum_size,
 		 n_sentinel);
-	  /*set up argc*/
-	  //int null_c=0;
-	  //char* null_addr=(char*) where_is_null(kpage+PGSIZE);
-	  //char* nulls;//=&null_addr;
+	  
 	  int num_pointers=counter_args;
 	  int arg_count=counter_args+1;
 	  int addr=(int) last_arg_addr;
 	  for(; counter_args>0; counter_args--){
-	    //printf("arg i=%d is %s\n",counter_args,null_addr);
-	    //args_cum_size+=sizeof(char*);
 	    
 	    memcpy(kpage+PGSIZE-args_cum_size-counter_args*sizeof(int),
 		   addr,sizeof(int));
@@ -562,28 +616,27 @@ setup_stack (void **esp, const char* file_name)
 	    printf("in the address %s\n",last_arg_addr);
 	    last_arg_addr=last_arg_addr+strlen((char*)last_arg_addr)+1;
 	    addr=(int)last_arg_addr;
-		   //&null_addr,sizeof(&null_addr));
-	    //null_addr=(char *)where_is_null(null_addr);
 	  }
 	  args_cum_size+=num_pointers*sizeof(char*);
 	  /*pointer to argv*/
-	  void* argv=(void *)(kpage+PGSIZE-args_cum_size);
+	  /*void* argv=(void *)(kpage+PGSIZE-args_cum_size);
 	  int argv_addr=(int)argv;
 	  args_cum_size+=sizeof(int);
 	  memcpy(kpage+PGSIZE-args_cum_size,argv_addr,sizeof(int));
 	  printf("writes %x at %s\n",kpage+PGSIZE-args_cum_size,
 		 kpage+PGSIZE-args_cum_size);
 	  /*insert number of argcount*/
-	  args_cum_size+=sizeof(int);
+	  /*args_cum_size+=sizeof(int);
 	  memcpy(kpage+PGSIZE-args_cum_size,&arg_count,sizeof(arg_count));
 	  printf("writes %d in %x\n",*(kpage+PGSIZE-args_cum_size),
 		 kpage+PGSIZE-args_cum_size);
 	  /*insert return address*/
-	  args_cum_size+=sizeof(void*);
-	  //void* return_p=0;
-	  memcpy(kpage+PGSIZE-args_cum_size,&n_sentinel,sizeof(n_sentinel));
-	  printf("and the return is %s\n",kpage+PGSIZE
-		 -args_cum_size);
+	  /*args_cum_size+=sizeof(userpage_v);
+	  void* userpage_vpgsize = userpage_v+PGSIZE;
+	  
+	  memcpy(kpage+PGSIZE-args_cum_size,&userpage_vpgsize,
+		 sizeof(&userpage_vpgsize));
+	  printf("and the return is %x\n",userpage_vpgsize);*/
 	  *esp = PHYS_BASE;
 	  
 	}
