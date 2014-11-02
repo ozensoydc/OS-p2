@@ -1,0 +1,120 @@
+                            +-----------------+                         
+                            |      CS 230     |                     
+                            |    Project 2    |                     
+                            | DESIGN DOCUMENT |
+                            +-----------------+
+
+--- Group ---
+Daniel Deng <ddeng@uchicago.edu>
+Deniz Ozensoy <ozensoydc@uchicago.edu>
+
+--- Preliminaries ---
+
+Our code is not functional.  We have been stuck at being unable to properly exit
+from user programs, which results with the tests forever hanging.  I (Deniz) 
+worked on the stack aspect of the project and was very very confused by the
+guide provided, which I'll elaborate upon below.
+
+                            PRIORITY DONATION
+                            =================
+
+---- DATA STRUCTURES ----
+
+Added to struct thread:
+
+    struct list donors;             /* List of donating threads */
+    struct list_elem donation_elem; /* List element for donation list */
+    int donated_priority;           /* Current highest donated priority */
+    struct lock *waiting_for;       /* Lock currently blocking thread */
+    struct list_elem *waitelem;     /* List element for waiting threads list*/
+    int64_t wakeup_time;            /* a counter of when to wake up */
+
+Added to struct semaphore_elem:
+    
+    struct list_elem *thread_elem;  /* Semaphore's thread??? */
+
+Added global list
+      
+      struct list waiting_threads;
+
+---- ALGORITHMS ----
+
+process.c
+    1. A literal implementation of the stack as in the stack guidance sheet did
+    not work for me. I've left my original code with all the relevant printf
+    statements showing the accurate placement arguements and their addresses
+    into the stack.  I was confused upon the insertion of some data (such as
+    integers on to stack) but I believe they are also correctly implemented.
+    However, I completely missed out on the relationship on the role of an
+    interrupt frame with regards to argument passing.  Upon which, I've analyzed
+    in detail (via comments in code) implementations of argument passing in 
+    P2 with interrupt frames found in github.  One particularly clever one was
+    on a git repo at: https://github.com/LucasSeveryn/pintOS/blob/master/src/
+    userprog/process.c.  I will elaborate on my initial implementation of the
+    stack, and this alternative.
+    Originally: I skipped insertion of the whole commandline into stack as
+    proposed upon realizing that the parsed argument strings are going to be
+    longer than the command line, and as it did not make sense with the 
+    descriptions in 3.5.1.  I first reversed each argument token in place.
+    this put a null pointer at the beginning of each token, so I removed the 
+    leading null tokens, and put a null token at the end of each reversed arg
+    token.  Once all arg tokens were pushed, I reversed the byte order of all 
+    the bytes falling in between:kpage+PGSIZE-(kpage+PGSIZE-total_arg_len).
+    this ensured that for an echo/0 command, first I produced ohec/0 as a result
+    of token inversion, and then /0ohce such that 'e' points to the lowest
+    uaddr on the stack, such that a simple read given the location of 'e' 
+    would produce echo/0.  This was following the implementation hints.  
+    I see no advantages to this method, except maybe it requires less of 
+    stack growth compared to the alternative implementation.  Also, seting up
+    the stack in setup_stack did not resolve in successful argument passing
+    without f_.esp pointing to the fake return address.  Which makes sense,
+    but was not elaborated upon anywhere, and really threw me off track for 
+    days.
+    
+    Alternative:
+    
+    Setting up the stack in start_process has the exact same memory requirements
+    as the description above, except there is no longer a need to keep track of
+    running total memory usage, simply pointing f_.esp to the furthest address
+    in stack yet written into suffices.  This is great simplicity because it
+    ensures that f_.esp is successfully pointing to the return address at the end
+    of set up.
+    
+    A couple of convenient trics I've learned from analysis of Mr.Severyn's code
+    was the idea to allocate arrays that store argument strings and addresses,
+    and simply push them onto the stack in reverse order they are found in the 
+    said args array, and adresses array
+
+thread.c
+    1. thread_set_priority() sets the priority to the chosen value.  If the
+    thread currently has no donors or the new priority is higher than its
+    current donated priority, then set its donated_priority to the chosen
+    value.  Next, it checks if this function makes a different thread get
+    a higher priority and yields if so.
+
+    2. thread_priority_sort() is used to sort the list of ready_threads
+    thread in descending order by priority. 
+
+    3. thread_init() initiates the global list waiting_threads.  This list
+    needs to be initiated early to resume automated scheduling as soon as 
+    possible
+    
+    4. init_thread() chose to embed the semaphore struct into struct thread
+    because it is quite small, more convenient to initialize, and allows 
+    for faster code (no need to dynamically allocate memory using malloc).
+    Initial value semaphore timer_sema is set to be 0.  This way in timer.c
+    when timer_sleep calls sema_down(), the thread will be blocked.
+    
+    5. Less() a wrapping function to compare threads according to the
+    parameters that are entered using the struct info* passed to it.  However,
+    currently it is used only to compare t->wakeup_time for two given threads.
+    It uses list_entry to pull the structs using the list_elements passed.
+
+    6. wakeup_threads() takes the current number of ticks, and searches 
+    through waiting_threads list.  If the wakeup_time of any of the 
+    threads matches the current tick, the thread is removed from 
+    waiting_threads, and thread_unblock is called in accordance with our
+    design decision to not use semaphores to force a thread to sleep.
+    However, for book keeping sake, we are manually incrementing the semaphore
+    value.
+    
