@@ -11,8 +11,10 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "filesys/file.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -70,6 +72,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -184,6 +187,10 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
+#ifdef USERPROG
+  thread_add_child(thread_current(), tid);
+#endif
+
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
      member cannot be observed. */
@@ -288,10 +295,42 @@ thread_tid (void)
 void
 thread_exit (void) 
 {
+  struct thread *t = thread_current();
   ASSERT (!intr_context ());
 
+
 #ifdef USERPROG
+  struct list_elem *e;
+  struct file_handle *fh;
+  struct return_status *rs1;
+
+  // Notifies parents of return status
+  if (t->parent != NULL) {
+      struct return_status *rs2 = malloc(sizeof(struct return_status));
+      rs2->tid = t->tid;
+      rs2->return_code = t->ret;
+      list_push_back(&t->parent->returned_children, &rs2->elem);
+  }
+
+  if (t->child_alive != NULL)
+      sema_up(t->child_alive);
+      
   process_exit ();
+
+  // Closes open files
+  while (!list_empty(&t->files)) {
+      e = list_pop_front(&t->files);
+      fh = list_entry(e, struct file_handle, elem);
+      file_close (fh->file);
+      free(fh);
+  }
+
+  // Frees the list of children
+  while (!list_empty(&t->returned_children)) {
+      e = list_pop_front(&t->files);
+      rs1 = list_entry(e, struct return_status, elem);
+      free(rs1);
+  }
 #endif
 
   /* Remove thread from all threads list, set our status to dying,
@@ -299,6 +338,7 @@ thread_exit (void)
      when it calls thread_schedule_tail(). */
   intr_disable ();
   list_remove (&thread_current()->allelem);
+  list_remove (&thread_current()->childelem);
   thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
@@ -470,6 +510,14 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+
+#ifdef USERPROG
+  t->child_alive = NULL;
+  list_init(&t->children);
+  list_init(&t->files);
+  list_init(&t->returned_children);
+  t->next_fd = 2;
+#endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -581,7 +629,85 @@ allocate_tid (void)
 
   return tid;
 }
-
+
+struct thread*
+get_thread_by_tid (tid_t tid) 
+{
+    struct list_elem *e;
+
+    for (e = list_begin(&all_list); e != list_end(&all_list);
+            e = list_next(e)) {
+        struct thread *t = list_entry(e, struct thread, allelem);
+        if (t->tid == tid)
+            return t;
+    }
+
+    return NULL;
+}
+
+#ifdef USERPROG
+struct file_handle*
+thread_get_fh(struct list *files, int fd)
+{
+    struct file_handle *fh;
+    struct list_elem *e;
+
+    for (e = list_begin(files); e != list_end(files); e = list_next(e)) {
+        fh = list_entry (e, struct file_handle, elem);
+        if (fh->fd == fd)
+            return fh;
+    }
+
+    return NULL;
+}
+
+struct return_status*
+thread_get_child_status(int cid) 
+{
+    struct return_status *rs;
+    struct thread *t;
+    struct list_elem *e;
+
+    for (e = list_begin(&t->returned_children); e != list_end(&t->returned_children);
+            e = list_next(e)) {
+        rs = list_entry(e, struct return_status, elem);
+        if (rs->tid == cid) 
+            return rs;
+    }
+
+    return NULL;
+}
+
+int
+thread_add_fd(struct file *f)
+{
+    struct thread *t = thread_current();
+    struct file_handle *fh = malloc(sizeof(struct file_handle));
+
+    fh->fd = t->next_fd++;
+    fh->file = f;
+    list_push_front(&t->files, &fh->elem);
+
+    return fh->fd;
+}
+
+void
+thread_remove_file(struct file_handle *fh)
+{
+    list_remove(&fh->elem);
+}
+
+void
+thread_add_child(struct thread *p, tid_t cid)
+{
+    struct thread *child = get_thread_by_tid(cid);
+    child->parent = p;
+    list_push_back (&p->children, &child->childelem);
+}
+#endif
+
+
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
