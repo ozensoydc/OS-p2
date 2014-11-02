@@ -16,6 +16,7 @@
 #include "userprog/process.h"
 #include "filesys/file.h"
 #include "userprog/pagedir.h"
+
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -494,6 +495,9 @@ running_thread (void)
 static bool
 is_thread (struct thread *t)
 {
+  if(t->magic != THREAD_MAGIC){
+    printf("magic is corrupted\n");
+  }
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
@@ -511,17 +515,19 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
-  t->magic = THREAD_MAGIC;
+  
   list_push_back (&all_list, &t->allelem);
 
 #ifdef USERPROG
+  //sema_init(t->child_alive,0);
   t->child_alive = NULL;
   list_init(&t->children);
   list_init(&t->files);
   list_init(&t->returned_children);
-  sema_init(t->child_lock, 0);
+  sema_init(&t->child_lock, 0);
   t->next_fd = 2;
 #endif
+  t->magic = THREAD_MAGIC;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
