@@ -11,7 +11,106 @@
 #include "devices/shutdown.h"
 #include "devices/input.h"
 #include "userprog/process.h"
+#include "threads/vaddr.h"
+#include "userprog/pagedir.h"
 
+#define MAX_ARGS 3
+#define USER_VADDR_BOTTOM ((void *) 0x0804000)
+
+struct lock filesys_lock;
+void syscall_init(void);
+static void syscall_handler(struct intr_frame *f);
+int write (int fd, const void *buffer, unsigned size);
+void get_arg (struct intr_frame *f, int *arg, int n);
+void check_valid_buffer (void *buffer, unsigned size);
+void check_valid_ptr(const void *vaddr);
+int user_to_kernel_ptr(const void *vaddr);
+
+
+void
+syscall_init(void)
+{
+    lock_init(&filesys_lock);
+    intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+}
+
+static void
+syscall_handler(struct intr_frame *f)
+{
+    int args[MAX_ARGS];
+    check_valid_ptr((const void*) f->esp);
+    switch (* (int *) f->esp)
+    {
+        case SYS_WRITE:
+            {
+                get_arg(f, &args[0], 3);
+                check_valid_buffer((void *) args[1], (unsigned) args[2]);
+                args[1] = user_to_kernel_ptr((const void *) args[1]);
+                f->eax = write(args[0], (const void *) args[1], (unsigned) args[2]);
+                break;
+            }
+    }
+}
+
+int write (int fd, const void *buffer, unsigned size)
+{
+    if (fd == STDOUT_FILENO) {
+        putbuf(buffer, size);
+        return size;
+    }
+}
+
+
+void
+get_arg (struct intr_frame *f, int *arg, int n)
+{
+    int i;
+    int *ptr;
+
+    for (i = 0; i < n; i++) {
+        ptr = (int *) f->esp + i + 1;
+        check_valid_ptr((const void *) ptr);
+        arg[i] = *ptr;
+    }
+}
+
+void
+check_valid_buffer (void *buffer, unsigned size)
+{
+    unsigned i;
+    char* local_buffer = (char *) buffer;
+    for (i = 0; i < size; i++) {
+        check_valid_ptr((const void*) local_buffer);
+        local_buffer++;
+    }
+}
+
+
+
+
+
+void check_valid_ptr(const void *vaddr)
+{
+    if (!is_user_vaddr(vaddr) || vaddr < USER_VADDR_BOTTOM)
+    {
+        thread_exit();
+    }
+}
+
+int user_to_kernel_ptr(const void *vaddr)
+{
+    check_valid_ptr(vaddr);
+    void *ptr = pagedir_get_page(thread_current()->pagedir, vaddr);
+    if (!ptr) {
+        thread_exit();
+    }
+    return (int) ptr;
+}
+
+
+
+
+/*
 static void syscall_exit (int *, struct intr_frame *);
 static void syscall_halt (int *, struct intr_frame *);
 static void syscall_exec (int *, struct intr_frame *);
@@ -38,10 +137,10 @@ static struct lock filesys_lock;
 
 static void syscall_handler (struct intr_frame *f);
 
-/* Reads a byte at user virtual address UADDR
+* Reads a byte at user virtual address UADDR
  * UADDR must be below PHYS_BASE.
  * Returns the byte value if successful, -1 if a segfault
- * occurred. */
+ * occurred. *
 static int
 get_byte_user (const uint8_t *uaddr)
 {
@@ -60,9 +159,9 @@ get_word_user (const int *uaddr)
     return result;
 }
 
-/* Writes BYTE to user address UDST
+* Writes BYTE to user address UDST
  * UDST must be below PHYS_BASE.
- * Returns true if successful, false if a segfault occured */
+ * Returns true if successful, false if a segfault occured *
 static bool
 put_user (uint8_t *udst, uint8_t byte)
 {
@@ -349,4 +448,4 @@ syscall_close (int *args, struct intr_frame *f)
     lock_release(&filesys_lock);
 }
 
-        
+*/      
