@@ -113,12 +113,10 @@ struct thread
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
     
-    void *esp; //???
 
     int ret;
     struct semaphore* child_alive;
     struct semaphore child_loading;
-    struct semaphore pagedir_mod; ////////
 
     struct thread *parent;
     struct list_elem childelem;

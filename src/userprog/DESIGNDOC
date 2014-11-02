@@ -15,27 +15,12 @@ from user programs, which results with the tests forever hanging.  I (Deniz)
 worked on the stack aspect of the project and was very very confused by the
 guide provided, which I'll elaborate upon below.
 
-                            PRIORITY DONATION
+                            ARGUEMENT PASSING
                             =================
 
 ---- DATA STRUCTURES ----
 
-Added to struct thread:
-
-    struct list donors;             /* List of donating threads */
-    struct list_elem donation_elem; /* List element for donation list */
-    int donated_priority;           /* Current highest donated priority */
-    struct lock *waiting_for;       /* Lock currently blocking thread */
-    struct list_elem *waitelem;     /* List element for waiting threads list*/
-    int64_t wakeup_time;            /* a counter of when to wake up */
-
-Added to struct semaphore_elem:
-    
-    struct list_elem *thread_elem;  /* Semaphore's thread??? */
-
-Added global list
-      
-      struct list waiting_threads;
+(none)
 
 ---- ALGORITHMS ----
 
@@ -85,36 +70,60 @@ process.c
     and simply push them onto the stack in reverse order they are found in the 
     said args array, and adresses array
 
-thread.c
-    1. thread_set_priority() sets the priority to the chosen value.  If the
-    thread currently has no donors or the new priority is higher than its
-    current donated priority, then set its donated_priority to the chosen
-    value.  Next, it checks if this function makes a different thread get
-    a higher priority and yields if so.
-
-    2. thread_priority_sort() is used to sort the list of ready_threads
-    thread in descending order by priority. 
-
-    3. thread_init() initiates the global list waiting_threads.  This list
-    needs to be initiated early to resume automated scheduling as soon as 
-    possible
     
-    4. init_thread() chose to embed the semaphore struct into struct thread
-    because it is quite small, more convenient to initialize, and allows 
-    for faster code (no need to dynamically allocate memory using malloc).
-    Initial value semaphore timer_sema is set to be 0.  This way in timer.c
-    when timer_sleep calls sema_down(), the thread will be blocked.
-    
-    5. Less() a wrapping function to compare threads according to the
-    parameters that are entered using the struct info* passed to it.  However,
-    currently it is used only to compare t->wakeup_time for two given threads.
-    It uses list_entry to pull the structs using the list_elements passed.
+                                    System Calls
 
-    6. wakeup_threads() takes the current number of ticks, and searches 
-    through waiting_threads list.  If the wakeup_time of any of the 
-    threads matches the current tick, the thread is removed from 
-    waiting_threads, and thread_unblock is called in accordance with our
-    design decision to not use semaphores to force a thread to sleep.
-    However, for book keeping sake, we are manually incrementing the semaphore
-    value.
-    
+Data Structures
+
+1. struct lock filesys_lock;
+    This lock was acquired whenever any writing/reading to the filesystem was done,
+    since the filesystem did not support multiple 
+
+2. The following was added to thread.h and used for keeping track of
+the children and parent of each respective thread.  Also, a list of
+open files was also kept.
+
+  nt32_t *pagedir;                  /* Page directory. */
+  void *esp; //???          
+  int ret;
+  struct semaphore* child_alive;
+  struct semaphore child_loading;
+  struct semaphore pagedir_mod; ////////                         
+  struct thread *parent;
+  struct list_elem childelem;
+  struct list children;
+  struct list returned_children;                                       
+  struct list files;
+  int next_fd;
+  struct semaphore child_lock;
+
+3. This was used to keep track of relevent file information in each process.
+Thus file descriptors were on a per process basis.
+    struct file_handle
+    {
+        int fd;
+        struct file *file;
+        struct list_elem elem;
+    }
+
+4. A child gives this information to its parent in order for the wait command to work.
+    struct return_status
+    {
+        int tid;
+        int return_code;
+        struct list_elem elem;
+    }
+
+
+
+Algorithms
+1. The code for reading and writing user data involved first looking at the file descriptor.
+If it was a special one such as stdin or stdout, then the relevent appropiate action was taken.
+However, if we were actually using a file, we would first check if the buffer we were writing/
+reading to were in valid memory locations.  Then we just used the relevent file commands.
+
+2. Our wait implementation never got passed an infinite loop.
+
+3.  I don't think I implemented system calls to a rigorous enough level to answer these
+questions.
+
