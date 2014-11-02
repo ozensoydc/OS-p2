@@ -35,7 +35,7 @@ process_execute (const char *file_name)
   char *fn_copy;
   tid_t tid;
   struct thread* p_thread = thread_current();
-  
+  sema_init(&p_thread->child_lock,0);
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -46,12 +46,12 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  sema_down(p_thread->child_lock);
+  sema_down(&p_thread->child_lock);
   if (tid == TID_ERROR){
     palloc_free_page (fn_copy); 
   }
   
-  sema_up(p_thread->child_lock);
+  sema_up(&p_thread->child_lock);
   return tid;
 }
 
@@ -111,7 +111,7 @@ start_process (void *file_name_)
     arg_len=strlen(args[temp])+1;
     if_.esp -= arg_len;
     arg_addresses[temp]=if_.esp;
-    mempcpy(if_.esp,args[temp],arg_len);
+    memcpy(if_.esp,args[temp],arg_len);
   }
   
   /* word align */
