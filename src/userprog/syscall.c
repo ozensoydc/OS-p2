@@ -43,13 +43,16 @@ syscall_handler(struct intr_frame *f)
     {
         case SYS_WRITE:
             {
-                get_arg(f, &args[0], 3);
+                get_arg(f, args, 3);
+                //printf("%d, %s, %d\n\n", (int)args[0],  args[1], (unsigned) args[2]);
                 check_valid_buffer((void *) args[1], (unsigned) args[2]);
                 args[1] = user_to_kernel_ptr((const void *) args[1]);
                 f->eax = write(args[0], (const void *) args[1], (unsigned) args[2]);
+                //printf("breaking\n\n\n");
                 break;
             }
     }
+    //printf("noob\n\n\n");
 }
 
 int write (int fd, const void *buffer, unsigned size)
@@ -93,8 +96,10 @@ void check_valid_ptr(const void *vaddr)
 {
     if (!is_user_vaddr(vaddr) || vaddr < USER_VADDR_BOTTOM)
     {
+        //printf("IT WAs NOT VALID\n\n");
         thread_exit();
     }
+    //printf("IT WASSSSS VALID\n\n\n");
 }
 
 int user_to_kernel_ptr(const void *vaddr)
