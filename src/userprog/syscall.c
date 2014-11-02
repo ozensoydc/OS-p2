@@ -75,12 +75,12 @@ put_user (uint8_t *udst, uint8_t byte)
 static int *
 syscall_get_args( struct intr_frame *f)
 {
-    int *args = (int *) malloc(3);
+    int *args = (int *) malloc(4);
     int syscall_num = get_word_user((int *)(f->esp));
     int argc = syscall_argc[syscall_num];
     int i;
 
-    for (i = 0; i < argc; i++) {
+    for (i = 0; i <= argc; i++) {
         args[i] = get_word_user((int *)(f->esp) + i);
         // check for validity?
     }
