@@ -17,14 +17,10 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#include "threads/malloc.h"
-#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-void read_bytes(void* v_addr,int n);
-char* revert_words(char* word, int n);
-void shift_down(void* v_addr,int n);
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -34,24 +30,18 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
-  struct thread* p_thread = thread_current();
-  sema_init(&p_thread->child_lock,0);
+
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
-    //sema_up(p_thread->child_lock);
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  sema_down(&p_thread->child_lock);
-  if (tid == TID_ERROR){
+  if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
-  }
-  
-  sema_up(&p_thread->child_lock);
   return tid;
 }
 
@@ -60,7 +50,6 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  printf("in start_process\n");
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
@@ -71,91 +60,86 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
-
-    /* If load failed, quit. */
-  if (!success) 
-    thread_exit ();
   
-  /*setting up the stack*/
-  char* cmd_line = (char *) malloc(strlen(file_name)+1);
-  mempcpy(cmd_line,file_name,strlen(file_name)+1);
-  char *save_token;
-  int arg_length=0;
-  char *token=strtok_r(cmd_line," ", &save_token);
-  char *cmd_name=token;
-  int argc=0;
-  int cum_length=0;
-  int temp=0;
-  int tmp_len=0;
-  /* create an array to hold the args*/
-  char **args=(char **)malloc((strlen(file_name)+1)*sizeof(char));
-  if(args==NULL){
-    printf("Ran out of memory trying to allocate %d bytes.\n", 
-	   strlen(file_name)+1);
-  }
-  args[0]=token;
+  char* save;
+  char* token;
+  int argc;
+  char* command_line=(char*)malloc(sizeof(strlen((char*)file_name)+1));
+  mempcpy(command_line,file_name_,strlen((char*)file_name)+1);
+  printf("command_line is: %s\n",command_line);
+  
+  int* cum_length=0;
+  /*acquire argc*/
+  token=strtok_r(command_line," ",&save);
   argc++;
-  
-  /* acquire argc */
-  while(token=strtok_r(NULL," ", &save_token)){
-    args[argc]=token;
-    cum_length+=strlen(token)+1;
-    printf("wrote %s to index %d\n",args[argc],argc);
+  while(token=strtok_r(NULL," ",&save)){
     argc++;
   }
+  /* arrays for argv and addresses*/
+  char *cmd_line=(char*)malloc(sizeof(strlen((char*)file_name)+1));
+  char** argv=(char **)malloc(sizeof(char)*(strlen((char*)file_name)+1));
+  int i=0;
+  int** addresses=(int **)malloc(sizeof(int*)*argc);
   
-  /* acquire addresses */
+  token=strtok_r(cmd_line," ",&save);
+  argv[0]=token;
+  cum_length+=strlen(argv[0])+1;
+  
+  /* step argv array */
+  for(i=1;i<argc;i++){
+    argv[i]=strtok_r(NULL," "&save);
+    printf("wrote %s to index %d in argv\n",argv[i],i);
+    cum_length+=strlen(argv[i])+1;
+  }
+  
+  /* push args into stack, and record their addresses */
   int arg_len;
-  int **arg_addresses=(int **)malloc(argc*sizeof(int*));
-  for(temp=argc-1;temp>=0;temp--){
-    arg_len=strlen(args[temp])+1;
-    if_.esp -= arg_len;
-    arg_addresses[temp]=if_.esp;
-    memcpy(if_.esp,args[temp],arg_len);
+  for(i=argc-1;i>=0;i--){
+    arg_len=strlen(argv[i])+1;
+    if_.esp -=arg_len;
+    addresses[i]=if_.esp;
+    mempcpy(if_.esp,argv[i],arg_len);
   }
   
-  /* word align */
-  int w_a = cum_length % 4;
+  /*word adjust */
+  int w_a=cum_length%4;
   if(w_a!=0){
-    if_.esp-= 4-w_a; //if word align is not zero, go 4-w_a bytes on stack
-    cum_length+=4-w_a;
+    if_.esp-=4-w_a;
   }
   
-  /* 0 sentinel argument */
-  cum_length+=4;
-  *(int *) if_.esp = 0;
-
-  /* push addresses of the arguments */
+  /* NULL sentinel */
+  if_.esp-=4; //size of int
+  *(int*)if_.esp = 0;
   
-  for(temp=argc-1;temp>=0;temp--){
-    cum_length+=4;
+  /*pushing arg addresses*/
+  for(i=argc-1;i>=1;i--){
     if_.esp-=4;
-    *(void **)if_.esp=arg_addresses[temp];
+    *(void**)if_.esp=adresses[i];
   }
-  
+
   /*argv*/
-  cum_length+=4;
   if_.esp-=4;
-  *(char **)if_.esp = if_.esp+4;
-  
+  *(char **)if_.esp=if_.esp+4;
+
   /*argc*/
-  cum_length+=4;
   if_.esp-=4;
-  *(int *)if_.esp = argc;
+  *(int*)if_.esp=argc;
   
   /*fake return address*/
-  cum_length+=4;
   if_.esp-=4;
   *(int*)if_.esp=0;
-  
-  /* Deallocating memory */
-  free(arg_addresses);
-  free(args);
-  
 
-
+  /*deallocate memory*/
+  free(argv);
+  free(addresses);
+  free(cmd_line);
+  free(command_line);
+  
+  
+  /* If load failed, quit. */
   palloc_free_page (file_name);
-  
+  if (!success) 
+    thread_exit ();
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -179,8 +163,6 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while(1){
-  }
   return -1;
 }
 
@@ -288,7 +270,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp, const char* file_name);
+static bool setup_stack (void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -302,13 +284,16 @@ bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
-  printf("in load\n");
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
   off_t file_ofs;
   bool success = false;
   int i;
 
+  char* process_name=(char*)malloc(sizeof(strlen(file_name)+1));
+  mempcpy(process_name,file_name,strlen(file_name)+1);
+  
+  
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
@@ -316,16 +301,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
-  /* Pass only the executable name */
-  printf("filename in load: %s \n", file_name);
-  char* cmd_line=(char *)malloc(strlen(file_name)+1);
-  mempcpy(cmd_line,file_name,strlen(file_name)+1);//=NULL;
-  //strlcpy(cmd_line,file_name,sizeof(cmd_line));
-  printf("strlcpy file_name: %s\n",cmd_line);
-  char* tok_char;//=(char *)malloc(sizeof(100));
-  char* exec = strtok_r(cmd_line," ",&tok_char);
-  printf("exec: %s\n", exec);
-  file = filesys_open (exec);
+  char* save_token;
+  process_name = strltok(process_name," ",&save_token);
+  printf("in load, process name is %s\n",process_name);
+  file = filesys_open (process_name);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -405,7 +384,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp,file_name))
+  if (!setup_stack (esp))
     goto done;
 
   /* Start address. */
@@ -530,212 +509,21 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp, const char* file_name) 
+setup_stack (void **esp) 
 {
-  printf("entered setup_stack file_name: %s\n",file_name);
   uint8_t *kpage;
   bool success = false;
-  int cmd_size=strlen(file_name);
-  /* checking that size of command line is not greater than PGSIZE*/
-  if(cmd_size>PGSIZE){
-    return NULL;
-  }
-  else{
-    
-    kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-    
-    if (kpage != NULL) 
-      {
-	success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, 
-				kpage, true);
-	if (success){
-	  /*push the command line string onto stack*/
-	  /*printf("here is what the file_name is %s\n",file_name);
-	  memcpy(kpage + PGSIZE - cmd_size, file_name, cmd_size);
-	  char* cmd_line=(char *)malloc(strlen(file_name)+1);
-	  mempcpy(cmd_line,file_name,strlen(file_name)+1);
-	  printf("copied cmd_line: %s\n",cmd_line);
-	  char* save_token;
-	  char* token=strtok_r(cmd_line," ", &save_token);
-	  printf("token is %s at line464\n", token);
-	  struct thread *t = thread_current();
-	  void* userpage_v = 
-	  pagedir_get_page(t->pagedir,
-			   ((uint8_t *)PHYS_BASE) - PGSIZE);
-	  int counter_args=0; //counts how many args are put in
-	  int args_cum_size=0;
-	  while(token!=NULL){
-	    /* kernel v_addr corresponding to physical address of
-	       token*/
-	  /*printf("token is %s\n",token);
-	    char* cmd_token=(char*)malloc(sizeof(strlen(token)+1));
-	    mempcpy(cmd_token,token,strlen(token)+1);
-	    printf("cmd_token is %s\n",cmd_token);
-	    args_cum_size+=strlen(cmd_token)+1;
-	    
-	    cmd_token=revert_words(token,strlen(token)+1);
-	    
-	    counter_args++;
-	    memcpy(kpage + PGSIZE - args_cum_size,(void*)cmd_token,
-		   strlen(cmd_token)+1);
-	    
-	    printf("bytes down: %d\n",args_cum_size);
-	    
-	    token=strtok_r(NULL," ",&save_token);
-	  }
-	  
-	  memcpy(kpage+PGSIZE-args_cum_size,
-		 revert_byte_order(kpage+PGSIZE-args_cum_size,args_cum_size),
-		 args_cum_size);
-	  
-	  /*shift one byte right, and add a null to the end*/
-	  /*shift_down(kpage+PGSIZE-args_cum_size,args_cum_size);
-	  read_bytes(kpage+PGSIZE-args_cum_size,args_cum_size);
-	  void* last_arg_addr=(void*)kpage+PGSIZE-args_cum_size;
-	  /*word align*/
-	  /*uint8_t w_a=0;
-	  args_cum_size+=sizeof(w_a);
-	  memcpy(kpage+PGSIZE-args_cum_size,
-		 &(w_a),sizeof(w_a));
-	  printf("w_a at %x is %hu \n",kpage+PGSIZE-args_cum_size,w_a);
-	  /*from here on args_cum_size also servers to keep track
-	    of how far below kpage+PGSIZE we are in bytes */
-	  
-	  /*set up null sentinel at counter_args++*/
-	  /* char* n_sentinel=0;
-	  args_cum_size+=sizeof(n_sentinel);
-	  memcpy(kpage+PGSIZE-args_cum_size,&n_sentinel,
-		 sizeof(n_sentinel));
-	  printf("n_sentinel at %x is %s\n",kpage+PGSIZE-args_cum_size,
-		 n_sentinel);
-	  
-	  int num_pointers=counter_args;
-	  int arg_count=counter_args+1;
-	  int addr=(int) last_arg_addr;
-	  for(; counter_args>0; counter_args--){
-	    
-	    memcpy(kpage+PGSIZE-args_cum_size-counter_args*sizeof(int),
-		   addr,sizeof(int));
-	    printf("written %x at %x\n",addr,
-		   kpage+PGSIZE-args_cum_size-counter_args*sizeof(int));
-	    printf("points to %s\n",kpage+PGSIZE-args_cum_size-
-				     counter_args*sizeof(int));
-	    printf("in the address %s\n",last_arg_addr);
-	    last_arg_addr=last_arg_addr+strlen((char*)last_arg_addr)+1;
-	    addr=(int)last_arg_addr;
-	  }
-	  args_cum_size+=num_pointers*sizeof(char*);
-	  /*pointer to argv*/
-	  /*void* argv=(void *)(kpage+PGSIZE-args_cum_size);
-	  int argv_addr=(int)argv;
-	  args_cum_size+=sizeof(int);
-	  memcpy(kpage+PGSIZE-args_cum_size,argv_addr,sizeof(int));
-	  printf("writes %x at %s\n",kpage+PGSIZE-args_cum_size,
-		 kpage+PGSIZE-args_cum_size);
-	  /*insert number of argcount*/
-	  /*args_cum_size+=sizeof(int);
-	  memcpy(kpage+PGSIZE-args_cum_size,&arg_count,sizeof(arg_count));
-	  printf("writes %d in %x\n",*(kpage+PGSIZE-args_cum_size),
-		 kpage+PGSIZE-args_cum_size);
-	  /*insert return address*/
-	  /*args_cum_size+=sizeof(userpage_v);
-	  void* userpage_vpgsize = userpage_v+PGSIZE;
-	  
-	  memcpy(kpage+PGSIZE-args_cum_size,&userpage_vpgsize,
-		 sizeof(&userpage_vpgsize));
-	  printf("and the return is %x\n",userpage_vpgsize);*/
-	  *esp = PHYS_BASE;
-	  
-	}
-	else
-	  palloc_free_page (kpage);
-      }
-    return success;
-  }
-  
-}
 
-/* shift bytes 1 byte down */
-void shift_down(void* v_addr,int n){
-  int i=0;
-  char* buf=(char*)v_addr;
-  for(;i<n;i++){
-    if(i==n-1){
-      buf[i]='\0';
+  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  if (kpage != NULL) 
+    {
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success)
+        *esp = PHYS_BASE;
+      else
+        palloc_free_page (kpage);
     }
-    else{
-      buf[i]=buf[i+1];
-    }
-  }
-  return;
-}
-
-/* Given a position in a stack, read through n bytes towards the top of the
-   stack.  This is mostly for debugging */
-void read_bytes(void* v_addr,int n){
-  int i;
-  char* ch=(char *) v_addr;
-  for(i=0;i<n;i++){
-    printf("it reads: %c at addr: %x\n",*(ch+i),v_addr+i);
-  }
-}
-
-/*given a position in a stack, moves down to find the first instance of
-  a null pointer, upon finding it , returns the address of the 
-  previous byte*/
-void* where_is_null(void* v_addr){
-  char* p_return;
-  char* p_compare=(char*)v_addr-2;
-  while(p_compare!=NULL){
-    printf("pointer points to %s\n",p_compare);
-    p_compare=(char*)v_addr-1;
-  }
-  p_return=p_compare+1;
-  return p_return;
-}
-/* inverts a word */
-
-char* revert_words(char* word, int n){
-  char temp;
-  int i=0;
-  int recurse=n/2;
-  for(;i<recurse;i++){
-    temp=word[i];
-    printf("take %c swap with %c in rev_word\n",
-	   temp,*(word+n-i-1));
-    word[i]=word[n-i-1];
-    word[n-i-1]=temp;
-  }
-  i=0;
-  for(;i<n;i++){
-    if(i==n-1){
-      word[i]='\0';
-    }
-    else{
-      word[i]=word[i+1];
-      printf("%d char is now %c\n",word[i]);
-    }
-  }
-  read_bytes(word,n);
-  return word;
-}
-/*reverse bits takes the address to a pointer, and the number of bytes
-  there on to inverse, and reverts byte order*/
-void* revert_byte_order(void* v_addr,int to_revert){
-  //int counter;
-  printf("in revert_byte_order, first thing is %s\n",(char*)v_addr);
-  char* rev=(char *)malloc(to_revert);
-  char temp;
-  rev = (char *) v_addr;
-  int i=0;
-  int to_recurse=to_revert/2;
-  for(;i<to_recurse;i++){
-    temp=rev[i];
-    printf("take %c swap with %c\n",*(rev+i),*(rev+to_revert-i-1));
-    rev[i]=rev[to_revert-i-1];
-    rev[to_revert-i-1]=temp;
-  }
-  return (void*) rev;
+  return success;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
